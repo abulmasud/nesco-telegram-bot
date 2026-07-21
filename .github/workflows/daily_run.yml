@@ -2,8 +2,8 @@ name: Daily NESCO Balance Tracker
 
 on:
   schedule:
-    - cron: '0 1 * * *' # প্রতিদিন বাংলাদেশ সময় সকাল ৭টায় অটো রান হবে
-  workflow_dispatch: # ম্যানুয়ালি রান করার বাটন অন রাখবে
+    - cron: '0 1 * * *'
+  workflow_dispatch:
 
 jobs:
   run-scraper:
@@ -17,14 +17,14 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install Chrome
+      - name: Install Chrome and Virtual Display (Xvfb)
         run: |
           sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
+          sudo apt-get install -y google-chrome-stable xvfb
 
       - name: Install Dependencies
         run: |
           pip install -r requirements.txt
 
-      - name: Run Scraper
-        run: python main.py
+      - name: Run Scraper with Virtual Display
+        run: xvfb-run -a python main.py
