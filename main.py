@@ -38,11 +38,9 @@ def get_meter_balance(driver, meter_num):
     
     wait = WebDriverWait(driver, 25)
     
-    # ইনপুট ফিল্ড অনুসন্ধান
     input_box = wait.until(EC.element_to_be_clickable((By.NAME, "cust_no")))
     input_box.clear()
     
-    # মানুষের মতো টাইপ করার জন্য ক্যারেক্টার বাই ক্যারেক্টার ইনপুট
     for char in meter_num:
         input_box.send_keys(char)
         time.sleep(0.1)
@@ -52,7 +50,6 @@ def get_meter_balance(driver, meter_num):
     submit_btn = driver.find_element(By.XPATH, "//button[@type='submit'] | //input[@type='submit']")
     driver.execute_script("arguments[0].click();", submit_btn)
     
-    # ব্যালেন্স কন্টেইনার আসার জন্য অপেক্ষা
     wait.until(EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'অবশিষ্ট ব্যালেন্স')]")))
     time.sleep(2)
     
@@ -65,15 +62,14 @@ def get_meter_balance(driver, meter_num):
     return None
 
 def main():
-    # Undetected Chromedriver অপশন সেটআপ
     options = uc.ChromeOptions()
-    options.headless = True
+    # লিনাক্স সার্ভারের জন্য প্রয়োজনীয় ফ্ল্যাগ
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--disable-gpu")
     
-    # Cloudflare বাইপাস করার জন্য uc.Chrome ব্যবহার
-    driver = uc.Chrome(options=options, version_main=120) 
+    # version_main সরিয়ে দেওয়া হয়েছে যাতে লেটেস্ট ভার্সন অটো-ম্যাচ করে
+    driver = uc.Chrome(options=options) 
     
     try:
         for meter in METERS:
@@ -93,10 +89,11 @@ def main():
                     msg = f"🚨 *NESCO Update Failed* 🚨\n🏷️ *{meter['name']}* ({meter['num']})\n❌ ব্যালেন্স পেজ থেকে ফেচ করা যায়নি।"
                 
                 send_telegram(msg)
-                time.sleep(5) # একটি চেকের পর ৫ সেকেন্ড বিরতি (যাতে সার্ভার স্প্যাম মনে না করে)
+                time.sleep(5) 
                 
             except Exception as e:
-                msg = f"🚨 *NESCO Error* 🚨\n🏷️ *{meter['name']}* (`{meter['num']}`)\n❌ সমস্যা: TimeoutException বা Cloudflare ব্লক।"
+                err_type = type(e).__name__
+                msg = f"🚨 *NESCO Error* 🚨\n🏷️ *{meter['name']}* (`{meter['num']}`)\n❌ সমস্যা: {err_type} (পেজ লোড হয়নি)।"
                 send_telegram(msg)
     finally:
         driver.quit()
