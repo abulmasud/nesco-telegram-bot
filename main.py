@@ -2,10 +2,7 @@ import os
 import re
 import time
 import requests
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -14,7 +11,6 @@ from selenium.webdriver.support import expected_conditions as EC
 BOT_TOKEN = "8841919944:AAGR4bYNVPfAQFFWcx8xrHKSlbqFmrINbHA"
 DEFAULT_CHAT_ID = "5276103292"
 
-# আপনার ১০টি মিটারের তালিকা
 METERS = [
     {"num": "24903832", "name": "দোকানের মিটার"},
     {"num": "24032515", "name": "হারোয়া ঘুণ্টির পাড় (বাসা)"},
@@ -40,52 +36,44 @@ def get_meter_balance(driver, meter_num):
     url = "https://customer.nesco.gov.bd/pre/panel"
     driver.get(url)
     
-    # পেজ লোডের জন্য অতিরিক্ত সময় দেয়া
-    wait = WebDriverWait(driver, 20)
+    wait = WebDriverWait(driver, 25)
     
     # ইনপুট ফিল্ড অনুসন্ধান
     input_box = wait.until(EC.element_to_be_clickable((By.NAME, "cust_no")))
     input_box.clear()
-    input_box.send_keys(meter_num)
     
-    time.sleep(1) # টাইপিং সম্পন্ন হতে ছোট বিরতি
+    # মানুষের মতো টাইপ করার জন্য ক্যারেক্টার বাই ক্যারেক্টার ইনপুট
+    for char in meter_num:
+        input_box.send_keys(char)
+        time.sleep(0.1)
+        
+    time.sleep(1)
     
-    # সাবমিট বাটন প্রেস
-    submit_btn = driver.find_element(By.XPATH, "//button[@type='submit'] | //input[@type='submit'] | //button[contains(text(), 'রিচার্জ')]")
+    submit_btn = driver.find_element(By.XPATH, "//button[@type='submit'] | //input[@type='submit']")
     driver.execute_script("arguments[0].click();", submit_btn)
     
     # ব্যালেন্স কন্টেইনার আসার জন্য অপেক্ষা
     wait.until(EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'অবশিষ্ট ব্যালেন্স')]")))
-    
     time.sleep(2)
-    page_source = driver.page_source
     
+    page_source = driver.page_source
     match = re.search(r'অবশিষ্ট ব্যালেন্স[\s\S]*?([\d\.\,]+)', page_source)
+    
     if match:
         clean_bal = match.group(1).replace(',', '')
         return float(clean_bal)
     return None
 
 def main():
-    chrome_options = Options()
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1920,1080")
+    # Undetected Chromedriver অপশন সেটআপ
+    options = uc.ChromeOptions()
+    options.headless = True
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--window-size=1920,1080")
     
-    # Anti-Bot Flags (অটোমেশন লুকানোর জন্য)
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option('useAutomationExtension', False)
-    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-    
-    # CDP দিয়ে webdriver ফ্ল্যাগ সম্পূর্ণ হাইড করা
-    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-        "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-    })
+    # Cloudflare বাইপাস করার জন্য uc.Chrome ব্যবহার
+    driver = uc.Chrome(options=options, version_main=120) 
     
     try:
         for meter in METERS:
@@ -102,22 +90,13 @@ def main():
                         f"━━━━━━━━━━━━━━━━━━━"
                     )
                 else:
-                    msg = (
-                        f"🚨 *NESCO Update Failed* 🚨\n"
-                        f"🏷️ *{meter['name']}* ({meter['num']})\n"
-                        f"❌ ব্যালেন্স পেজ থেকে ফেচ করা যায়নি।"
-                    )
+                    msg = f"🚨 *NESCO Update Failed* 🚨\n🏷️ *{meter['name']}* ({meter['num']})\n❌ ব্যালেন্স পেজ থেকে ফেচ করা যায়নি।"
+                
                 send_telegram(msg)
-                time.sleep(3) # সার্ভার প্র his ড়ে প্রেশার কমাতে বিরতি
+                time.sleep(5) # একটি চেকের পর ৫ সেকেন্ড বিরতি (যাতে সার্ভার স্প্যাম মনে না করে)
                 
             except Exception as e:
-                # লম্বা স্ট্যাকট্রেস বাদ দিয়ে সংক্ষিপ্ত এরর মেসেজ পাঠানো
-                err_type = type(e).__name__
-                msg = (
-                    f"🚨 *NESCO Error* 🚨\n"
-                    f"🏷️ *{meter['name']}* (`{meter['num']}`)\n"
-                    f"❌ **সমস্যা:** {err_type} (সার্ভার সাড়া দেয়নি বা সিকিউরিটি ব্লক করেছে।)"
-                )
+                msg = f"🚨 *NESCO Error* 🚨\n🏷️ *{meter['name']}* (`{meter['num']}`)\n❌ সমস্যা: TimeoutException বা Cloudflare ব্লক।"
                 send_telegram(msg)
     finally:
         driver.quit()
