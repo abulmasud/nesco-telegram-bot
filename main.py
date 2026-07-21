@@ -1,3 +1,4 @@
+import os
 import re
 import time
 import requests
@@ -19,36 +20,46 @@ METERS = [
     {"num": "24908365", "name": "Robi"}
 ]
 
-def send_telegram(text):
+def send_telegram_msg(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {"chat_id": DEFAULT_CHAT_ID, "text": text, "parse_mode": "Markdown"}
+    requests.post(url, json=payload, timeout=10)
+
+def send_telegram_photo(photo_path, caption):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
     try:
-        requests.post(url, json=payload, timeout=10)
+        with open(photo_path, 'rb') as photo:
+            payload = {"chat_id": DEFAULT_CHAT_ID, "caption": caption}
+            requests.post(url, data=payload, files={"photo": photo}, timeout=15)
     except Exception as e:
-        print(f"Telegram error: {e}")
+        print(f"Photo send error: {e}")
+        send_telegram_msg(caption) # ছবি পাঠাতে না পারলে শুধু টেক্সট পাঠাবে
 
 def get_meter_balance(sb, meter_num):
     url = "https://customer.nesco.gov.bd/pre/panel"
-    
-    # uc_open_with_reconnect ক্লাউডফ্লেয়ার বাইপাস করতে সাহায্য করে
     sb.uc_open_with_reconnect(url, 4)
     
-    # ইনপুট বক্স লোড হওয়ার জন্য অপেক্ষা
-    sb.wait_for_element('input[name="cust_no"]', timeout=20)
-    sb.clear('input[name="cust_no"]')
+    # ইনপুট বক্স খোঁজার চেষ্টা (দুটি সম্ভাব্য সিলেক্টর দিয়ে)
+    try:
+        sb.wait_for_element('input[name="cust_no"]', timeout=10)
+        input_selector = 'input[name="cust_no"]'
+    except:
+        # cust_no না পেলে যেকোনো text ইনপুট খুঁজবে
+        sb.wait_for_element('input[type="text"], input[name="customer_no"]', timeout=5)
+        input_selector = 'input[type="text"], input[name="customer_no"]'
+    
+    sb.clear(input_selector)
     
     # মানুষের মতো টাইপ করা
     for char in meter_num:
-        sb.add_text('input[name="cust_no"]', char)
+        sb.add_text(input_selector, char)
         time.sleep(0.1)
         
     time.sleep(1)
-    
-    # সাবমিট বাটনে ক্লিক
     sb.click('button[type="submit"], input[type="submit"]')
     
     # ব্যালেন্স লেখা আসার জন্য অপেক্ষা
-    sb.wait_for_text('অবশিষ্ট ব্যালেন্স', timeout=20)
+    sb.wait_for_text('অবশিষ্ট ব্যালেন্স', timeout=15)
     time.sleep(2)
     
     page_source = sb.get_page_source()
@@ -60,7 +71,6 @@ def get_meter_balance(sb, meter_num):
     return None
 
 def main():
-    # UC (Undetected Chromedriver) Mode এ SeleniumBase চালু করা
     with SB(uc=True, test=True, headless=True, browser="chrome", window_size="1920,1080") as sb:
         for meter in METERS:
             try:
@@ -75,16 +85,23 @@ def main():
                         f"🟢 _Developed by SK JOY_\n"
                         f"━━━━━━━━━━━━━━━━━━━"
                     )
+                    send_telegram_msg(msg)
                 else:
-                    msg = f"🚨 *NESCO Update Failed* 🚨\n🏷️ *{meter['name']}* ({meter['num']})\n❌ ব্যালেন্স পেজ থেকে ফেচ করা যায়নি।"
+                    send_telegram_msg(f"🚨 *NESCO Update Failed*\n🏷️ *{meter['name']}*\n❌ ব্যালেন্স পাওয়া যায়নি।")
                 
-                send_telegram(msg)
                 time.sleep(4) 
                 
             except Exception as e:
                 err_type = type(e).__name__
-                msg = f"🚨 *NESCO Error* 🚨\n🏷️ *{meter['name']}* (`{meter['num']}`)\n❌ সমস্যা: {err_type}"
-                send_telegram(msg)
+                
+                # এখানে ম্যাজিক: এরর হলে স্ক্রিনশট তুলবে
+                screenshot_file = f"error_{meter['num']}.png"
+                sb.save_screenshot(screenshot_file)
+                
+                msg = f"🚨 *NESCO Error* 🚨\n🏷️ *{meter['name']}* (`{meter['num']}`)\n❌ সমস্যা: {err_type}\n📸 (সার্ভারে পেজটি কেমন দেখাচ্ছে, স্ক্রিনশটটি দেখুন)"
+                
+                # স্ক্রিনশটসহ টেলিগ্রামে পাঠানো
+                send_telegram_photo(screenshot_file, msg)
 
 if __name__ == "__main__":
     main()
