@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import requests
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -31,7 +32,7 @@ def send_telegram(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {"chat_id": DEFAULT_CHAT_ID, "text": text, "parse_mode": "Markdown"}
     try:
-        requests.post(url, json=payload)
+        requests.post(url, json=payload, timeout=10)
     except Exception as e:
         print(f"Telegram error: {e}")
 
@@ -39,19 +40,26 @@ def get_meter_balance(driver, meter_num):
     url = "https://customer.nesco.gov.bd/pre/panel"
     driver.get(url)
     
-    # ইনপুট ফিল্ড ও বাটন খোঁজা
-    wait = WebDriverWait(driver, 15)
-    input_box = wait.until(EC.presence_of_element_located((By.NAME, "cust_no")))
+    # পেজ লোডের জন্য অতিরিক্ত সময় দেয়া
+    wait = WebDriverWait(driver, 20)
+    
+    # ইনপুট ফিল্ড অনুসন্ধান
+    input_box = wait.until(EC.element_to_be_clickable((By.NAME, "cust_no")))
     input_box.clear()
     input_box.send_keys(meter_num)
     
-    submit_btn = driver.find_element(By.XPATH, "//button[@type='submit'] | //input[@type='submit']")
-    submit_btn.click()
+    time.sleep(1) # টাইপিং সম্পন্ন হতে ছোট বিরতি
     
-    # রেসপন্স আসার জন্য অপেক্ষা
+    # সাবমিট বাটন প্রেস
+    submit_btn = driver.find_element(By.XPATH, "//button[@type='submit'] | //input[@type='submit'] | //button[contains(text(), 'রিচার্জ')]")
+    driver.execute_script("arguments[0].click();", submit_btn)
+    
+    # ব্যালেন্স কন্টেইনার আসার জন্য অপেক্ষা
     wait.until(EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'অবশিষ্ট ব্যালেন্স')]")))
     
+    time.sleep(2)
     page_source = driver.page_source
+    
     match = re.search(r'অবশিষ্ট ব্যালেন্স[\s\S]*?([\d\.\,]+)', page_source)
     if match:
         clean_bal = match.group(1).replace(',', '')
@@ -60,26 +68,57 @@ def get_meter_balance(driver, meter_num):
 
 def main():
     chrome_options = Options()
-    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--window-size=1920,1080")
+    
+    # Anti-Bot Flags (অটোমেশন লুকানোর জন্য)
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option('useAutomationExtension', False)
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+    
+    # CDP দিয়ে webdriver ফ্ল্যাগ সম্পূর্ণ হাইড করা
+    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+        "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+    })
     
     try:
         for meter in METERS:
             try:
                 balance = get_meter_balance(driver, meter["num"])
                 if balance is not None:
-                    msg = f"⚡ *NESCO Balance Update* ⚡\n━━━━━━━━━━━━━━━━━━━\n🏷️ *মিটারের নাম:* *{meter['name']}*\n🔢 *মিটার নম্বর:* `{meter['num']}`\n💰 *অবশিষ্ট ব্যালেন্স:* *{balance:.2f} ৳*\n🟢 _Developed by SK JOY_\n━━━━━━━━━━━━━━━━━━━"
+                    msg = (
+                        f"⚡ *NESCO Balance Update* ⚡\n"
+                        f"━━━━━━━━━━━━━━━━━━━\n"
+                        f"🏷️ *মিটারের নাম:* *{meter['name']}*\n"
+                        f"🔢 *মিটার নম্বর:* `{meter['num']}`\n"
+                        f"💰 *অবশিষ্ট ব্যালেন্স:* *{balance:.2f} ৳*\n"
+                        f"🟢 _Developed by SK JOY_\n"
+                        f"━━━━━━━━━━━━━━━━━━━"
+                    )
                 else:
-                    msg = f"🚨 *NESCO Update Failed* 🚨\n🏷️ *মিটারের নাম:* *{meter['name']}*\n🔢 *মিটার নম্বর:* `{meter['num']}`\n❌ ব্যালেন্স পাওয়া যায়নি।"
-                
+                    msg = (
+                        f"🚨 *NESCO Update Failed* 🚨\n"
+                        f"🏷️ *{meter['name']}* ({meter['num']})\n"
+                        f"❌ ব্যালেন্স পেজ থেকে ফেচ করা যায়নি।"
+                    )
                 send_telegram(msg)
+                time.sleep(3) # সার্ভার প্র his ড়ে প্রেশার কমাতে বিরতি
+                
             except Exception as e:
-                print(f"Error fetching {meter['num']}: {e}")
-                send_telegram(f"🚨 *NESCO Error* 🚨\n🏷️ *{meter['name']}* ({meter['num']})\n❌ {str(e)}")
+                # লম্বা স্ট্যাকট্রেস বাদ দিয়ে সংক্ষিপ্ত এরর মেসেজ পাঠানো
+                err_type = type(e).__name__
+                msg = (
+                    f"🚨 *NESCO Error* 🚨\n"
+                    f"🏷️ *{meter['name']}* (`{meter['num']}`)\n"
+                    f"❌ **সমস্যা:** {err_type} (সার্ভার সাড়া দেয়নি বা সিকিউরিটি ব্লক করেছে।)"
+                )
+                send_telegram(msg)
     finally:
         driver.quit()
 
