@@ -1,13 +1,8 @@
-import os
 import re
 import time
 import requests
-import undetected_chromedriver as uc
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from seleniumbase import SB
 
-# Telegram Config
 BOT_TOKEN = "8841919944:AAGR4bYNVPfAQFFWcx8xrHKSlbqFmrINbHA"
 DEFAULT_CHAT_ID = "5276103292"
 
@@ -32,28 +27,31 @@ def send_telegram(text):
     except Exception as e:
         print(f"Telegram error: {e}")
 
-def get_meter_balance(driver, meter_num):
+def get_meter_balance(sb, meter_num):
     url = "https://customer.nesco.gov.bd/pre/panel"
-    driver.get(url)
     
-    wait = WebDriverWait(driver, 25)
+    # uc_open_with_reconnect ক্লাউডফ্লেয়ার বাইপাস করতে সাহায্য করে
+    sb.uc_open_with_reconnect(url, 4)
     
-    input_box = wait.until(EC.element_to_be_clickable((By.NAME, "cust_no")))
-    input_box.clear()
+    # ইনপুট বক্স লোড হওয়ার জন্য অপেক্ষা
+    sb.wait_for_element('input[name="cust_no"]', timeout=20)
+    sb.clear('input[name="cust_no"]')
     
+    # মানুষের মতো টাইপ করা
     for char in meter_num:
-        input_box.send_keys(char)
+        sb.add_text('input[name="cust_no"]', char)
         time.sleep(0.1)
         
     time.sleep(1)
     
-    submit_btn = driver.find_element(By.XPATH, "//button[@type='submit'] | //input[@type='submit']")
-    driver.execute_script("arguments[0].click();", submit_btn)
+    # সাবমিট বাটনে ক্লিক
+    sb.click('button[type="submit"], input[type="submit"]')
     
-    wait.until(EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'অবশিষ্ট ব্যালেন্স')]")))
+    # ব্যালেন্স লেখা আসার জন্য অপেক্ষা
+    sb.wait_for_text('অবশিষ্ট ব্যালেন্স', timeout=20)
     time.sleep(2)
     
-    page_source = driver.page_source
+    page_source = sb.get_page_source()
     match = re.search(r'অবশিষ্ট ব্যালেন্স[\s\S]*?([\d\.\,]+)', page_source)
     
     if match:
@@ -62,19 +60,11 @@ def get_meter_balance(driver, meter_num):
     return None
 
 def main():
-    options = uc.ChromeOptions()
-    # লিনাক্স সার্ভারের জন্য প্রয়োজনীয় ফ্ল্যাগ
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    
-    # version_main সরিয়ে দেওয়া হয়েছে যাতে লেটেস্ট ভার্সন অটো-ম্যাচ করে
-    driver = uc.Chrome(options=options) 
-    
-    try:
+    # UC (Undetected Chromedriver) Mode এ SeleniumBase চালু করা
+    with SB(uc=True, test=True, headless=True, browser="chrome", window_size="1920,1080") as sb:
         for meter in METERS:
             try:
-                balance = get_meter_balance(driver, meter["num"])
+                balance = get_meter_balance(sb, meter["num"])
                 if balance is not None:
                     msg = (
                         f"⚡ *NESCO Balance Update* ⚡\n"
@@ -89,14 +79,12 @@ def main():
                     msg = f"🚨 *NESCO Update Failed* 🚨\n🏷️ *{meter['name']}* ({meter['num']})\n❌ ব্যালেন্স পেজ থেকে ফেচ করা যায়নি।"
                 
                 send_telegram(msg)
-                time.sleep(5) 
+                time.sleep(4) 
                 
             except Exception as e:
                 err_type = type(e).__name__
-                msg = f"🚨 *NESCO Error* 🚨\n🏷️ *{meter['name']}* (`{meter['num']}`)\n❌ সমস্যা: {err_type} (পেজ লোড হয়নি)।"
+                msg = f"🚨 *NESCO Error* 🚨\n🏷️ *{meter['name']}* (`{meter['num']}`)\n❌ সমস্যা: {err_type}"
                 send_telegram(msg)
-    finally:
-        driver.quit()
 
 if __name__ == "__main__":
     main()
