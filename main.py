@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import random
 import requests
 from seleniumbase import SB
 
@@ -20,10 +21,24 @@ METERS = [
     {"num": "24908365", "name": "Robi"}
 ]
 
+# GitHub Secrets থেকে প্রক্সি রিড করা (নতুন লাইন বা কমা দিয়ে আলাদা করা)
+RAW_PROXIES = os.environ.get("PROXY_LIST", "")
+PROXIES = [p.strip() for p in re.split(r'[\n,]', RAW_PROXIES) if p.strip()]
+
+def get_random_proxy():
+    if PROXIES:
+        selected = random.choice(PROXIES)
+        print(f"🔗 Using Proxy: {selected}") 
+        return selected
+    return None
+
 def send_telegram_msg(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {"chat_id": DEFAULT_CHAT_ID, "text": text, "parse_mode": "Markdown"}
-    requests.post(url, json=payload, timeout=10)
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        print(f"Telegram error: {e}")
 
 def send_telegram_photo(photo_path, caption):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
@@ -33,24 +48,18 @@ def send_telegram_photo(photo_path, caption):
             requests.post(url, data=payload, files={"photo": photo}, timeout=15)
     except Exception as e:
         print(f"Photo send error: {e}")
-        send_telegram_msg(caption) # ছবি পাঠাতে না পারলে শুধু টেক্সট পাঠাবে
+        send_telegram_msg(caption)
 
 def get_meter_balance(sb, meter_num):
     url = "https://customer.nesco.gov.bd/pre/panel"
     sb.uc_open_with_reconnect(url, 4)
     
-    # ইনপুট বক্স খোঁজার চেষ্টা (দুটি সম্ভাব্য সিলেক্টর দিয়ে)
-    try:
-        sb.wait_for_element('input[name="cust_no"]', timeout=10)
-        input_selector = 'input[name="cust_no"]'
-    except:
-        # cust_no না পেলে যেকোনো text ইনপুট খুঁজবে
-        sb.wait_for_element('input[type="text"], input[name="customer_no"]', timeout=5)
-        input_selector = 'input[type="text"], input[name="customer_no"]'
+    # ইনপুট বক্স খোঁজা
+    sb.wait_for_element('input[name="cust_no"]', timeout=15)
+    input_selector = 'input[name="cust_no"]'
     
     sb.clear(input_selector)
     
-    # মানুষের মতো টাইপ করা
     for char in meter_num:
         sb.add_text(input_selector, char)
         time.sleep(0.1)
@@ -58,7 +67,6 @@ def get_meter_balance(sb, meter_num):
     time.sleep(1)
     sb.click('button[type="submit"], input[type="submit"]')
     
-    # ব্যালেন্স লেখা আসার জন্য অপেক্ষা
     sb.wait_for_text('অবশিষ্ট ব্যালেন্স', timeout=15)
     time.sleep(2)
     
@@ -71,7 +79,22 @@ def get_meter_balance(sb, meter_num):
     return None
 
 def main():
-    with SB(uc=True, test=True, headless=True, browser="chrome", window_size="1920,1080") as sb:
+    proxy = get_random_proxy()
+    
+    # proxy প্যারামিটার সহ SeleniumBase রান করা
+    sb_kwargs = {
+        "uc": True,
+        "test": True,
+        "headless": True,
+        "browser": "chrome",
+        "window_size": "1920,1080"
+    }
+    
+    # যদি প্রক্সি পাওয়া যায়, তবে সেটি যুক্ত করবে
+    if proxy:
+        sb_kwargs["proxy"] = proxy
+
+    with SB(**sb_kwargs) as sb:
         for meter in METERS:
             try:
                 balance = get_meter_balance(sb, meter["num"])
@@ -93,14 +116,10 @@ def main():
                 
             except Exception as e:
                 err_type = type(e).__name__
-                
-                # এখানে ম্যাজিক: এরর হলে স্ক্রিনশট তুলবে
                 screenshot_file = f"error_{meter['num']}.png"
                 sb.save_screenshot(screenshot_file)
                 
-                msg = f"🚨 *NESCO Error* 🚨\n🏷️ *{meter['name']}* (`{meter['num']}`)\n❌ সমস্যা: {err_type}\n📸 (সার্ভারে পেজটি কেমন দেখাচ্ছে, স্ক্রিনশটটি দেখুন)"
-                
-                # স্ক্রিনশটসহ টেলিগ্রামে পাঠানো
+                msg = f"🚨 *NESCO Error* 🚨\n🏷️ *{meter['name']}* (`{meter['num']}`)\n❌ সমস্যা: {err_type}\n🔗 ব্যবহৃত প্রক্সি: `{proxy}`"
                 send_telegram_photo(screenshot_file, msg)
 
 if __name__ == "__main__":
