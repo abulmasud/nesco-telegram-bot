@@ -21,7 +21,6 @@ METERS = [
     {"num": "24908365", "name": "Robi"}
 ]
 
-# সরাসরি কোডের ভেতরে প্রক্সি লিস্ট 
 HARDCODED_PROXIES = """
 61.178.81.100:1080
 61.244.157.239:1080
@@ -50,22 +49,15 @@ HARDCODED_PROXIES = """
 67.166.85.255:54785
 """
 
-# প্রক্সিগুলো লিস্ট আকারে তৈরি করা
 PROXIES = [p.strip() for p in re.split(r'[\n,]', HARDCODED_PROXIES) if p.strip()]
-
-def get_random_proxy():
-    if PROXIES:
-        selected = random.choice(PROXIES)
-        return selected
-    return None
 
 def send_telegram_msg(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {"chat_id": DEFAULT_CHAT_ID, "text": text, "parse_mode": "Markdown"}
     try:
         requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        print(f"Telegram error: {e}")
+    except:
+        pass
 
 def send_telegram_photo(photo_path, caption):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
@@ -73,22 +65,49 @@ def send_telegram_photo(photo_path, caption):
         with open(photo_path, 'rb') as photo:
             payload = {"chat_id": DEFAULT_CHAT_ID, "caption": caption}
             requests.post(url, data=payload, files={"photo": photo}, timeout=15)
-    except Exception as e:
-        print(f"Photo send error: {e}")
+    except:
         send_telegram_msg(caption)
 
+def try_loading_site_with_retries(max_retries=5):
+    random.shuffle(PROXIES) # লিস্টটা এলোমেলো করে নেবে
+    
+    for i in range(min(max_retries, len(PROXIES))):
+        proxy = PROXIES[i]
+        print(f"Testing Proxy: {proxy}")
+        
+        sb_kwargs = {
+            "uc": True,
+            "test": True,
+            "headless": True,
+            "browser": "chrome",
+            "window_size": "1920,1080",
+            "proxy": proxy
+        }
+        
+        # sb অবজেক্ট তৈরি করে পেজ লোডের চেষ্টা
+        try:
+            sb = SB(**sb_kwargs)
+            sb.setUp()
+            sb.uc_open_with_reconnect("https://customer.nesco.gov.bd/pre/panel", 4)
+            
+            # যদি ইনপুট বক্স পেয়ে যায়, তার মানে প্রক্সিটা ১০০% ওয়ার্কিং
+            if sb.is_element_present('input[name="cust_no"]'):
+                return sb, proxy
+                
+            # না পেলে ব্রাউজার ক্লোজ করে পরের প্রক্সিতে যাবে
+            sb.tearDown()
+        except Exception:
+            try:
+                sb.tearDown()
+            except:
+                pass
+            
+    return None, None
+
 def get_meter_balance(sb, meter_num):
-    url = "https://customer.nesco.gov.bd/pre/panel"
-    sb.uc_open_with_reconnect(url, 4)
-    
-    # ইনপুট বক্স খোঁজা
-    sb.wait_for_element('input[name="cust_no"]', timeout=15)
-    input_selector = 'input[name="cust_no"]'
-    
-    sb.clear(input_selector)
-    
+    sb.clear('input[name="cust_no"]')
     for char in meter_num:
-        sb.add_text(input_selector, char)
+        sb.add_text('input[name="cust_no"]', char)
         time.sleep(0.1)
         
     time.sleep(1)
@@ -100,27 +119,25 @@ def get_meter_balance(sb, meter_num):
     page_source = sb.get_page_source()
     match = re.search(r'অবশিষ্ট ব্যালেন্স[\s\S]*?([\d\.\,]+)', page_source)
     
+    # পরের মিটারের জন্য আবার মেইন পেজে ফিরে যাওয়া
+    sb.uc_open_with_reconnect("https://customer.nesco.gov.bd/pre/panel", 2)
+    sb.wait_for_element('input[name="cust_no"]', timeout=10)
+    
     if match:
-        clean_bal = match.group(1).replace(',', '')
-        return float(clean_bal)
+        return float(match.group(1).replace(',', ''))
     return None
 
 def main():
-    proxy = get_random_proxy()
+    send_telegram_msg("🔄 বটের কাজ শুরু হচ্ছে, সঠিক প্রক্সি খোঁজা হচ্ছে...")
     
-    # proxy প্যারামিটার সহ SeleniumBase রান করা
-    sb_kwargs = {
-        "uc": True,
-        "test": True,
-        "headless": True,
-        "browser": "chrome",
-        "window_size": "1920,1080"
-    }
+    # কাজ করে এমন একটি প্রক্সি খুঁজে বের করবে (সর্বোচ্চ ৫ বার চেষ্টা করবে)
+    sb, working_proxy = try_loading_site_with_retries(5)
     
-    if proxy:
-        sb_kwargs["proxy"] = proxy
+    if not sb:
+        send_telegram_msg("🚨 *Critical Error*\nকোনো ফ্রি প্রক্সি কাজ করেনি। সাইটটি ক্লাউডফ্লেয়ারে ব্লক হয়ে আছে।")
+        return
 
-    with SB(**sb_kwargs) as sb:
+    try:
         for meter in METERS:
             try:
                 balance = get_meter_balance(sb, meter["num"])
@@ -136,17 +153,23 @@ def main():
                     )
                     send_telegram_msg(msg)
                 else:
-                    send_telegram_msg(f"🚨 *NESCO Update Failed*\n🏷️ *{meter['name']}*\n❌ ব্যালেন্স পাওয়া যায়নি।\n🔗 ব্যবহৃত প্রক্সি: `{proxy}`")
-                
-                time.sleep(4) 
+                    send_telegram_msg(f"🚨 *NESCO Update Failed*\n🏷️ *{meter['name']}*\n❌ ব্যালেন্স পাওয়া যায়নি।")
+                time.sleep(3) 
                 
             except Exception as e:
                 err_type = type(e).__name__
                 screenshot_file = f"error_{meter['num']}.png"
                 sb.save_screenshot(screenshot_file)
-                
-                msg = f"🚨 *NESCO Error* 🚨\n🏷️ *{meter['name']}* (`{meter['num']}`)\n❌ সমস্যা: {err_type}\n🔗 ব্যবহৃত প্রক্সি: `{proxy}`"
+                msg = f"🚨 *NESCO Error* 🚨\n🏷️ *{meter['name']}* (`{meter['num']}`)\n❌ সমস্যা: {err_type}\n🔗 কাজ করা প্রক্সি: `{working_proxy}`"
                 send_telegram_photo(screenshot_file, msg)
+                
+                # যদি এক মিটার ফেইল করে, তবুও পেজটা রিলোড করে পরের মিটারের জন্য রেডি করা
+                sb.uc_open_with_reconnect("https://customer.nesco.gov.bd/pre/panel", 3)
+    finally:
+        try:
+            sb.tearDown()
+        except:
+            pass
 
 if __name__ == "__main__":
     main()
