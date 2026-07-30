@@ -21,14 +21,41 @@ METERS = [
     {"num": "24908365", "name": "Robi"}
 ]
 
-# GitHub Secrets থেকে প্রক্সি রিড করা (নতুন লাইন বা কমা দিয়ে আলাদা করা)
-RAW_PROXIES = os.environ.get("PROXY_LIST", "")
-PROXIES = [p.strip() for p in re.split(r'[\n,]', RAW_PROXIES) if p.strip()]
+# সরাসরি কোডের ভেতরে প্রক্সি লিস্ট 
+HARDCODED_PROXIES = """
+61.178.81.100:1080
+61.244.157.239:1080
+61.49.7.135:1080
+62.101.190.215:11055
+62.105.9.127:1025
+62.143.179.95:2555
+62.243.224.179:1080
+62.60.136.28:6688
+63.246.179.176:50775
+64.216.107.164:22077
+64.233.155.225:6487
+64.238.174.221:7801
+64.92.151.214:29137
+65.96.30.103:62093
+66.108.170.178:12162
+66.142.148.163:5187
+66.168.246.241:41229
+66.176.133.159:9721
+66.41.191.93:3651
+67.11.58.89:43639
+67.149.192.54:35351
+67.163.32.215:22743
+67.164.134.211:47029
+67.165.59.30:9975
+67.166.85.255:54785
+"""
+
+# প্রক্সিগুলো লিস্ট আকারে তৈরি করা
+PROXIES = [p.strip() for p in re.split(r'[\n,]', HARDCODED_PROXIES) if p.strip()]
 
 def get_random_proxy():
     if PROXIES:
         selected = random.choice(PROXIES)
-        print(f"🔗 Using Proxy: {selected}") 
         return selected
     return None
 
@@ -90,7 +117,6 @@ def main():
         "window_size": "1920,1080"
     }
     
-    # যদি প্রক্সি পাওয়া যায়, তবে সেটি যুক্ত করবে
     if proxy:
         sb_kwargs["proxy"] = proxy
 
@@ -110,7 +136,7 @@ def main():
                     )
                     send_telegram_msg(msg)
                 else:
-                    send_telegram_msg(f"🚨 *NESCO Update Failed*\n🏷️ *{meter['name']}*\n❌ ব্যালেন্স পাওয়া যায়নি।")
+                    send_telegram_msg(f"🚨 *NESCO Update Failed*\n🏷️ *{meter['name']}*\n❌ ব্যালেন্স পাওয়া যায়নি।\n🔗 ব্যবহৃত প্রক্সি: `{proxy}`")
                 
                 time.sleep(4) 
                 
